@@ -1,4 +1,6 @@
 from functools import partial
+from multiprocessing import cpu_count, Pool
+
 import os
 import math
 import json
@@ -8,6 +10,8 @@ from affine import Affine
 import mercantile
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.vrt import WarpedVRT
 
 from tilecutter.rgb import hex_to_rgb
 from tilecutter.png import to_smallest_png, to_paletted_png
@@ -22,6 +26,7 @@ def tif_to_tiles(
     max_zoom,
     tile_size=256,
     tile_renderer=to_smallest_png,
+    resampling="nearest",
 ):
     """Convert a tif to image tiles, rendered according to tile_renderer.
 
@@ -40,20 +45,24 @@ def tif_to_tiles(
     max_zoom : int, optional (default: None, which means it will automatically be calculated from extent)
     tile_size : int, optional (default: 256)
     tile_renderer : function, optional (default: to_smallest_png)
-        function that takes as input the data array for the tile and returns a PNG
+        function that takes as input the data array for the tile and returns a PNG or None
+    resampling : str, optional (default 'nearest')
+        Must be a supported value of rasterio.enums.Resampling
     """
 
     with rasterio.open(infilename) as src:
-
         for tile, data in read_tiles(
-            src, min_zoom=min_zoom, max_zoom=max_zoom, tile_size=tile_size
+            src,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+            tile_size=tile_size,
+            resampling=resampling,
         ):
             # Only write non-empty tiles
-            if not np.all(data == src.nodata):
-
-                # flip tile Y to match xyz scheme
-                # TODO: should this be in path below?
-                tiley = int(math.pow(2, tile.z)) - tile.y - 1
+            if (tile is not None) and (not np.all(data == src.nodata)):
+                png = tile_renderer(data)
+                if png is None:
+                    continue
 
                 outfilename = "{path}/{z}/{x}/{y}.png".format(
                     path=outpath, z=tile.z, x=tile.x, y=tile.y
@@ -63,11 +72,17 @@ def tif_to_tiles(
                     os.makedirs(outdir)
 
                 with open(outfilename, "wb") as out:
-                    out.write(tile_renderer(data))
+                    out.write(png)
 
 
 def render_tif_to_tiles(
-    infilename, outpath, colormap, min_zoom, max_zoom, tile_size=256
+    infilename,
+    outpath,
+    colormap,
+    min_zoom,
+    max_zoom,
+    tile_size=256,
+    resampling="nearest",
 ):
     """Convert a tif to image tiles, rendered according to the colormap.
 
@@ -86,6 +101,8 @@ def render_tif_to_tiles(
     colormap : dict of values to hex color codes
     min_zoom : int, optional (default: 0)
     max_zoom : int, optional (default: None, which means it will automatically be calculated from extent)
+    resampling : str, optional (default 'nearest')
+        Must be a supported value of rasterio.enums.Resampling
     """
 
     # palette is created as a series of r,g,b values.  Positions correspond to the index
@@ -115,6 +132,7 @@ def render_tif_to_tiles(
             paletted_renderer = partial(
                 to_paletted_png, palette=palette, nodata=src.nodata
             )
+
             tif_to_tiles(
                 indexedfilename,
                 outpath,
@@ -122,4 +140,5 @@ def render_tif_to_tiles(
                 max_zoom,
                 tile_size,
                 tile_renderer=paletted_renderer,
+                resampling=resampling,
             )

@@ -20,6 +20,7 @@ def tif_to_mbtiles(
     tile_size=256,
     metadata=None,
     tile_renderer=to_smallest_png,
+    resampling="nearest",
 ):
     """Convert a tif to mbtiles, rendering each tile using tile_renderer.
 
@@ -37,7 +38,9 @@ def tif_to_mbtiles(
     metadata : dict, optional
         metadata dictionary to add to the mbtiles metadata
     tile_renderer : function, optional (default: to_smallest_png)
-        function that takes as input the data array for the tile and returns a PNG
+        function that takes as input the data array for the tile and returns a PNG or None
+    resampling : str, optional (default 'nearest')
+        Must be a supported value of rasterio.enums.Resampling
     """
 
     with rasterio.Env() as env:
@@ -57,17 +60,32 @@ def tif_to_mbtiles(
                 mbtiles.meta = meta
 
                 for tile, data in read_tiles(
-                    src, min_zoom=min_zoom, max_zoom=max_zoom, tile_size=tile_size
+                    src,
+                    min_zoom=min_zoom,
+                    max_zoom=max_zoom,
+                    tile_size=tile_size,
+                    resampling=resampling,
                 ):
                     # Only write out non-empty tiles
-                    if not np.all(data == src.nodata):
+                    if (tile is not None) and (not np.all(data == src.nodata)):
+                        png = tile_renderer(data)
+                        if png is None:
+                            continue
+
                         # flip tile Y to match xyz scheme
                         tiley = int(math.pow(2, tile.z)) - tile.y - 1
-                        mbtiles.write_tile(tile.z, tile.x, tiley, tile_renderer(data))
+                        mbtiles.write_tile(tile.z, tile.x, tiley, png)
 
 
 def render_tif_to_mbtiles(
-    infilename, outfilename, colormap, min_zoom, max_zoom, metadata=None, tile_size=256
+    infilename,
+    outfilename,
+    colormap,
+    min_zoom,
+    max_zoom,
+    metadata=None,
+    tile_size=256,
+    resampling="nearest",
 ):
     """Convert a tif to mbtiles, rendered according to the colormap.
 
@@ -83,6 +101,8 @@ def render_tif_to_mbtiles(
     max_zoom : int, optional (default: None, which means it will automatically be calculated from extent)
     metadata : dict, optional
         metadata dictionary to add to the mbtiles metadata
+    resampling : str, optional (default 'nearest')
+        Must be a supported value of rasterio.enums.Resampling
     """
 
     # palette is created as a series of r,g,b values.  Positions correspond to the index
@@ -96,8 +116,10 @@ def render_tif_to_mbtiles(
                 raise ValueError("tif must be single band")
 
             # Convert the image to indexed, if necessary
-            unique_values = np.unique(src.read(1, masked=True))
-            unique_values = [v for v in unique_values if v is not np.ma.masked]
+            print("Inspecting unique values")
+            nodata = src.nodatavals[0]
+            data = src.read(1)
+            unique_values = np.unique(data[data != nodata])
 
             if len(set(unique_values).difference(values)):
                 # convert the image to indexed
@@ -117,4 +139,5 @@ def render_tif_to_mbtiles(
             tile_size,
             metadata=metadata,
             tile_renderer=paletted_renderer,
+            resampling=resampling,
         )
