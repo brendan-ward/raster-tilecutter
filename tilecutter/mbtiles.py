@@ -67,7 +67,7 @@ def tif_to_mbtiles(
                     resampling=resampling,
                 ):
                     # Only write out non-empty tiles
-                    if (tile is not None) and (not np.all(data == src.nodata)):
+                    if (data is not None) and (not np.all(data == src.nodata)):
                         png = tile_renderer(data)
                         if png is None:
                             continue

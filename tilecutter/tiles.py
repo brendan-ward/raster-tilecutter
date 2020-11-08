@@ -100,17 +100,26 @@ def read_tiles(src, min_zoom=0, max_zoom=None, tile_size=256, resampling="neares
 
     # Note: transform, width, height are omitted; these are automatically calculated by GDAL
     with WarpedVRT(
-        src, crs="EPSG:3857", nodata=src.nodata, resampling=Resampling[resampling]
+        src,
+        crs="EPSG:3857",
+        nodata=src.nodata,
+        resampling=Resampling[resampling],
+        warp_mem_limit=1024,
+        warp_extras={"NUM_THREADS": "ALL_CPUS"},
     ) as vrt:
 
         if max_zoom is None:
             max_zoom = get_default_max_zoom(src)
 
-        tiles = list(
-            mercantile.tiles(*get_geo_bounds(src), range(min_zoom, max_zoom + 1))
-        )
+        for zoom in range(min_zoom, max_zoom + 1):
 
-        # for tile in Counter("Extracting tiles...    ").iter(tiles):
-        for tile in Bar("Extracting tiles", max=len(tiles)).iter(tiles):
-            data = _read_tile(vrt, tile, tile_size)
-            yield tile, data
+            tiles = list(mercantile.tiles(*get_geo_bounds(src), zoom))
+
+            for tile in Bar(
+                f"Zoom {zoom}: ",
+                max=len(tiles),
+                suffix="%(percent)d%% [time: %(elapsed_td)s]",
+            ).iter(tiles):
+                data = _read_tile(vrt, tile, tile_size)
+                yield tile, data
+
