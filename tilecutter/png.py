@@ -12,7 +12,7 @@ from rasterio.dtypes import get_minimum_dtype
 from tilecutter.rgb import to_rgb_array, to_rgba_array
 
 
-MAX_VALUE = {"L": 255, "RGB": 16777215, "RGBA": 4294967295}
+MAX_VALUE = {"P": 255, "L": 255, "RGB": 16777215, "RGBA": 4294967295}
 
 
 def get_smallest_image_type(arr):
@@ -61,6 +61,10 @@ def to_smallest_png(arr, image_type=None):
     outside your value range, this may force use of a larger output PNG bit depth
     than is ideal.
 
+    This can produce paletted PNGs if image_type=P; the values will be stored
+    into the blue value of the palette.  This is helpful if the image needs to
+    be decoded as RGB type in the map client.
+
     Parameters
     ----------
     arr: input array or masked array, must have dtype of uint8, uint16, or uint32
@@ -77,10 +81,18 @@ def to_smallest_png(arr, image_type=None):
         image_type = get_smallest_image_type(arr)
 
     else:
-        if not image_type in ("L", "RGB", "RGBA"):
-            raise ValueError("Image type must be one of: L, RGB, RGBA")
+        if not image_type in ("P", "L", "RGB", "RGBA"):
+            raise ValueError("Image type must be one of: P, L, RGB, RGBA")
 
-    # Temporary: either remove RGBA support or make it work in browsers
+    if image_type == "P":
+        values = np.arange(0, arr.max() + 1, dtype="uint8")
+        zeros = np.zeros_like(values)
+        # store values into blue value of palette
+        palette = np.vstack([zeros, zeros, values]).T
+        return to_paletted_png(arr.astype("uint8"), palette)
+
+    # IMPORTANT: browsers seem to distort alpha values, so RGBA is not valid for encoding data that must be read out
+    # with exactly the same values
     if image_type == "RGBA":
         raise ValueError(
             "RGBA is not currently supported due to variable decoding in browsers"
@@ -96,12 +108,9 @@ def to_smallest_png(arr, image_type=None):
                 "Max of value range must be max of data type - 1"
                 "to allow max of data type to be nodata value"
             )
-    else:
-        # return the underlying ndarray
-        arr = arr.data
 
     if image_type == "L":
-        image_data = arr
+        image_data = arr.astype("uint8")
 
     elif image_type == "RGB":
         image_data = to_rgb_array(np.asarray(arr))
@@ -154,10 +163,6 @@ def to_paletted_png(arr, palette, nodata=None):
             arr = arr.filled(nodata_index)
         else:
             arr[arr == nodata] = nodata_index
-
-    else:
-        # return the underlying ndarray
-        arr = arr.data
 
     img = Image.frombuffer("P", (arr.shape[1], arr.shape[0]), arr, "raw", "P", 0, 1)
     # palette must be a list of [r, g, b, r, g, b, ...]  values
